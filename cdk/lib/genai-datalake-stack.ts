@@ -6,7 +6,7 @@ import * as iam from 'aws-cdk-lib/aws-iam';
 import { aws_emr as emr } from 'aws-cdk-lib';
 import { aws_emrserverless as emrserverless } from 'aws-cdk-lib';
 import { aws_sagemaker as sagemaker } from 'aws-cdk-lib';
-import { aws_athena as athena } from 'aws-cdk-lib';
+import { Activity, Persona } from '@cdklabs/cdk-aws-sagemaker-role-manager';
 
 export class GenAIDataLake extends cdk.Stack {
   constructor(scope: Construct, id: string, props?: cdk.StackProps) {
@@ -14,13 +14,14 @@ export class GenAIDataLake extends cdk.Stack {
 
     // VPC for EMR and SageMaker Studios
     const vpc = new ec2.Vpc(this, 'Vpc', {
-      maxAzs: 2
+      maxAzs: 2,
     });
 
     // S3 bucket for Studio storage
     const bucket = new s3.Bucket(this, 's3Bucket', {
       encryption: s3.BucketEncryption.KMS,
       bucketKeyEnabled: true,
+      enforceSSL: true,
       blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
     })
 
@@ -39,9 +40,13 @@ export class GenAIDataLake extends cdk.Stack {
         's3:Write*'
       ],
     });
+
+    //check if bucket key is null and then provide "nokey" as the default value
+    const bucketKey = bucket.encryptionKey ? bucket.encryptionKey.keyArn : "nokey";
+
     const sharedIAMpolicy = new iam.PolicyStatement({
       resources: [
-        '*'
+        bucketKey
       ],
       actions: [
         "kms:Decrypt",
@@ -59,7 +64,17 @@ export class GenAIDataLake extends cdk.Stack {
     });
     appRole.addToPolicy(new iam.PolicyStatement({
       resources: ['*'],
-      actions: ['glue:*'],
+      actions: [
+        "glue:CreateTable",
+        "glue:CreateDatabase",
+        "glue:UpdateTable",
+        "glue:DeleteTable",
+        "glue:GetDatabase",
+        "glue:GetDatabases",
+        "glue:GetTable",
+        "glue:DeleteDatabase",
+        "glue:UpdateDatabase"
+      ]
     }));
     appRole.addToPolicy(sharedS3Policy)
     appRole.addToPolicy(sharedIAMpolicy)
@@ -67,10 +82,46 @@ export class GenAIDataLake extends cdk.Stack {
     // EMR Studio role
     const studioRole = new iam.Role(this, 'EMRStudioRole', {
       assumedBy: new iam.ServicePrincipal('elasticmapreduce.amazonaws.com'),
-      managedPolicies: [
-        iam.ManagedPolicy.fromAwsManagedPolicyName('AmazonElasticMapReduceFullAccess'),
-      ]
     });
+    studioRole.addToPolicy(new iam.PolicyStatement({
+      resources: ['*'],
+      actions: [
+        "ec2:CreateNetworkInterface",
+        "ec2:CreateNetworkInterfacePermission",
+        "ec2:DeleteNetworkInterface",
+        "ec2:DeleteNetworkInterfacePermission",
+        "ec2:DescribeNetworkInterfaces",
+        "ec2:ModifyNetworkInterfaceAttribute",
+        "ec2:AuthorizeSecurityGroupEgress",
+        "ec2:AuthorizeSecurityGroupIngress",
+        "ec2:CreateSecurityGroup",
+        "ec2:DescribeSecurityGroups",
+        "ec2:RevokeSecurityGroupEgress",
+        "ec2:DescribeTags",
+        "ec2:DescribeInstances",
+        "ec2:DescribeSubnets",
+        "ec2:DescribeVpcs",
+        "elasticmapreduce:ListInstances",
+        "elasticmapreduce:DescribeCluster",
+        "elasticmapreduce:ListSteps",
+        "secretsmanager:GetSecretValue",
+        "ec2:CreateTags",
+        "glue:CreateTable",
+        "glue:CreateDatabase",
+        "glue:UpdateTable",
+        "glue:DeleteTable",
+        "glue:GetDatabase",
+        "glue:GetDatabases",
+        "glue:GetTable",
+        "glue:DeleteDatabase",
+        "glue:UpdateDatabase",
+        "iam:GetUser",
+        "iam:GetRole",
+        "iam:ListUsers",
+        "iam:ListRoles",
+        "sso:GetManagedApplicationInstance",
+        "sso-directory:SearchUsers"],
+    }));
     studioRole.addToPolicy(sharedS3Policy)
     studioRole.addToPolicy(sharedIAMpolicy)
 
@@ -133,7 +184,7 @@ export class GenAIDataLake extends cdk.Stack {
         }
       }],
       runtimeConfiguration: [{
-        classification: 'spark-defaults	',
+        classification: 'spark-defaults',
         properties: {
           'spark.hadoop.hive.metastore.client.factory.class': 'com.amazonaws.glue.catalog.metastore.AWSGlueDataCatalogHiveClientFactory',
         },
@@ -144,24 +195,40 @@ export class GenAIDataLake extends cdk.Stack {
     // SageMaker role
     const smRole = new iam.Role(this, 'SMStudioRole', {
       assumedBy: new iam.ServicePrincipal('sagemaker.amazonaws.com'),
-      managedPolicies: [
-        iam.ManagedPolicy.fromAwsManagedPolicyName('AmazonSageMakerFullAccess'),
-      ]
     });
-    smRole.addToPolicy(sharedS3Policy)
-    smRole.addToPolicy(sharedIAMpolicy)
 
-    smRole.addToPolicy(new iam.PolicyStatement({
+    const smPolicyDoc = iam.PolicyDocument.fromJson(
+      require(`${__dirname}/sagemaker-iam.json`)
+    )
+
+    const smPolicy = new iam.Policy(this, 'SMStudioPolicy', {
+      document: smPolicyDoc,
+    })
+
+    smPolicy.attachToRole(smRole)
+
+
+    smRole.addToPrincipalPolicy(sharedS3Policy)
+    smRole.addToPrincipalPolicy(sharedIAMpolicy)
+
+    smRole.addToPrincipalPolicy(new iam.PolicyStatement({
       resources: ['*'],
-      actions: ['athena:*'],
+      actions: [
+        "sagemaker:CreateSpace",
+        "sagemaker:AddTags",
+        "sagemaker:CreatePresignedDomainUrl",
+        "athena:GetQueryExecution",
+        "athena:GetQueryResults",
+        "athena:StartQueryExecution",
+        "athena:GetTableMetadata",
+        "athena:ListTableMetadata"],
     }));
-    smRole.addToPolicy(new iam.PolicyStatement({
+    smRole.addToPrincipalPolicy(new iam.PolicyStatement({
       resources: ['*'],
-      actions: ['bedrock:*'],
-    }));
-    smRole.addToPolicy(new iam.PolicyStatement({
-      resources: ['*'],
-      actions: ['bedrock-runtime:*'],
+      actions: [
+        "bedrock:InvokeAgent",
+        "bedrock:InvokeModel",
+        "bedrock:InvokeModelWithResponseStream"],
     }));
 
     // SageMaker Studio

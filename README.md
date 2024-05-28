@@ -95,3 +95,11 @@ Log in to the Athena console. Edit your Athena work group and set the output loc
 Now switch back to SageMaker Studio and open the notebook `athena-nlp.ipynb`.  In the first code cell, change the variable `region` to reflect your AWS Region, and set the variable `s3stagingathena` to the query result location from your Athena workgroup.
 
 Now you can execute the rest of the cells in the notebook and experiment with different questions.
+
+### Clean Up
+
+To clean up resource provisioned as part of the CDK stack run the below command from the cdk folder. 
+
+        cdk destroy
+
+Note you will need to manually delete the S3 buckets and its contents once this step is completed. 
