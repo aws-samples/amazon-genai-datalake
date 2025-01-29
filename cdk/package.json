@@ -21,7 +21,7 @@
   },
   "dependencies": {
     "@cdklabs/cdk-aws-sagemaker-role-manager": "^0.0.30",
-    "aws-cdk-lib": "2.133.0",
+    "aws-cdk-lib": "2.177.0",
     "cdk-nag": "^2.28.67",
     "constructs": "^10.3.0",
     "source-map-support": "^0.5.21"
